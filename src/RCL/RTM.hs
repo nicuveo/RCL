@@ -10,22 +10,21 @@ module RCL.RTM where
 
 -- imports
 
-import Control.Applicative
-import Control.Monad.Error
-import Control.Monad.Identity
-import Control.Monad.Reader
-import Control.Monad.State
+import           Control.Monad.Error
+import           Control.Monad.Identity
+import           Control.Monad.Reader
+import           Control.Monad.State
 
-import RCL.Query
-import RCL.Response
-import RCL.Services
-import RCL.Session
+import           RCL.Query
+import           RCL.Response
+import           RCL.Services
+import           RCL.Session
 
 
 
 -- exported types
 
-type RTMT m = StateT Session (ReaderT (Services m) (ErrorT Failure m))
+type RTMT m = ReaderT (Services m) (StateT Session (ErrorT Failure m))
 type RTM    = RTMT Identity
 
 
@@ -33,10 +32,17 @@ type RTM    = RTMT Identity
 -- exported functions
 
 runRTM :: Monad m => Services m -> APIKey -> Secret -> RTMT m a -> m (Either Failure a)
-runRTM c k s r = runErrorT $ flip runReaderT c $ evalStateT r $ Session k s "" ""
+runRTM c k s r = runErrorT $ evalStateT (runReaderT r c) $ Session k s "" ""
 
-makeRTM :: Functor m => (Services m -> Session -> m (Either Failure a)) -> RTMT m a
-makeRTM f = StateT (\s -> (,s) <$> ReaderT (\c -> ErrorT (f c s)))
+liftRTM :: Monad m => m a -> RTMT m a
+liftRTM = lift . lift . lift
 
-runQuery :: Functor m => URL -> QueryBuilder -> RTMT m Response
-runQuery u rb = makeRTM (\c s -> parseResponse <$> querant c (create s u rb))
+liftERTM :: Monad m => m (Either Failure a) -> RTMT m a
+liftERTM = lift . lift . ErrorT
+
+runQuery :: (Monad m, Functor m) => URL -> QueryBuilder -> RTMT m Response
+runQuery u b = do
+  q <- asks querant
+  s <- get
+  r <- liftRTM $ q (create s u b)
+  responseM r

@@ -19,6 +19,7 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.State
 import Data.Aeson
+import Data.Aeson.Types
 
 import RCL.Constants
 import RCL.Error
@@ -40,15 +41,15 @@ setToken t = modify (\s -> s { token = t })
 
 getAuthURL :: (Functor m, Monad m) => RTMT m QueryURL
 getAuthURL = do
-  s <- get
-  when (null $ frob s) getNewFrob
+  f <- gets frob
+  when (null f) getNewFrob
   makeAuthURL <$> get
 
 getNewToken :: (Monad m, Functor m) => RTMT m Token
 getNewToken = do
-  s <- get
-  a <- getAuth $ method "rtm.auth.getToken" >=> param ("frob", frob s)
-  t <- extract ((.: "auth") >=> (.: "token")) a
+  f <- gets frob
+  a <- getAuth $ method "rtm.auth.getToken" &: ("frob", f)
+  t <- extractM tokenParser a
   setToken t
   return t
 
@@ -56,14 +57,17 @@ getNewToken = do
 
 -- internal functions
 
+tokenParser :: Response -> Parser Token
+tokenParser = (.: "auth") >=> (.: "token")
+
 makeAuthURL :: Session -> QueryURL
 makeAuthURL s = create s authURL $ param ("frob", frob s) &: ("perms", "read") >=> sign
 
-getAuth :: Functor m => QueryBuilder -> RTMT m Response
+getAuth :: (Monad m, Functor m) => QueryBuilder -> RTMT m Response
 getAuth = runQuery restURL . (>=> format >=> sign)
 
 getNewFrob :: (Monad m, Functor m) => RTMT m ()
 getNewFrob = do
   a <- getAuth $ method "rtm.auth.getFrob"
-  f <- extract (.: "frob") a
+  f <- extractM (.: "frob") a
   modify (\s -> s { frob = f })

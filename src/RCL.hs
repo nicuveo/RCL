@@ -24,6 +24,6 @@ import RCL.Constants
 
 -- exported functions
 
-get :: Functor m => String -> Parameters -> RTMT m Response
+get :: (Monad m, Functor m) => String -> Parameters -> RTMT m Response
 get m ps = runQuery restURL (method m >=> qp >=> auth >=> sign)
   where qp = foldl' (>=>) format $ map param ps
