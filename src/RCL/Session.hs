@@ -1,19 +1,45 @@
+{-# LANGUAGE OverloadedStrings #-}
+
+
+
 -- module
 
-module RCL.Session where
+module RCL.Session (
+  Session(..),
+  setTimeline,
+  setToken,
+  setFrob,
+  emptySession,
+  ) where
+
+
+
+-- import
+
+import           RCL.Types
 
 
 
 -- exported types
 
-type APIKey = String
-type Secret = String
-type Frob   = String
-type Token  = String
-
 data Session = Session {
-  apiKey :: APIKey,
-  secret :: Secret,
-  token  :: Token,
-  frob   :: Frob
+  timeline :: Timeline,
+  token    :: Token,
+  frob     :: Frob
   }
+
+
+
+-- exported functions
+
+setTimeline :: Timeline -> Session -> Session
+setToken    :: Token    -> Session -> Session
+setFrob     :: Frob     -> Session -> Session
+
+setTimeline v s = s { timeline = v }
+setToken    v s = s { token    = v }
+setFrob     v s = s { frob     = v }
+
+
+emptySession :: Session
+emptySession = Session "" "" ""

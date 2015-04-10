@@ -1,3 +1,7 @@
+{-# LANGUAGE MultiParamTypeClasses #-}
+
+
+
 -- module
 
 module RCL.Error where
@@ -6,7 +10,7 @@ module RCL.Error where
 
 -- imports
 
-import Control.Monad.Error
+import           Control.Monad.Error
 
 
 

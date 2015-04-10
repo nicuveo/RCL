@@ -1,4 +1,5 @@
-{-# LANGUAGE TupleSections, OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections     #-}
 
 
 
@@ -6,51 +7,49 @@
 
 module RCL.Auth (
   getAuthURL,
-  getNewToken,
-  setToken,
   testToken,
+  updateToken,
   ) where
 
 
 
 -- imports
 
-import Control.Applicative
-import Control.Monad
-import Control.Monad.State
-import Data.Aeson
-import Data.Aeson.Types
+import           Control.Applicative
+import           Control.Monad
+import           Control.Monad.State
+import           Data.Aeson
+import           Data.Aeson.Types
 
-import RCL.Constants
-import RCL.Error
-import RCL.Query
-import RCL.Response
-import RCL.RTM
-import RCL.Session
+import           RCL.Config
+import           RCL.Error
+import           RCL.Query
+import           RCL.Response
+import           RCL.RTM
+import           RCL.Session
+import           RCL.Types
 
 
 
 -- exported functions
 
 testToken :: (Monad m, Functor m) => Token -> RTMT m Bool
-testToken t = not <$> testError (getAuth q)
-  where q = method "rtm.auth.checkToken" &: ("auth_token", t)
-
-setToken :: Monad m => Token -> RTMT m ()
-setToken t = modify (\s -> s { token = t })
+testToken t = not <$> testError (nonAuthCall q)
+  where q = method "rtm.auth.checkToken" >=. ("auth_token", t)
 
 getAuthURL :: (Functor m, Monad m) => RTMT m QueryURL
 getAuthURL = do
-  f <- gets frob
-  when (null f) getNewFrob
-  makeAuthURL <$> get
+  void getFrob
+  c <- config
+  s <- session
+  return $ makeAuthURL c s
 
-getNewToken :: (Monad m, Functor m) => RTMT m Token
-getNewToken = do
-  f <- gets frob
-  a <- getAuth $ method "rtm.auth.getToken" &: ("frob", f)
+updateToken :: (Monad m, Functor m) => RTMT m Token
+updateToken = do
+  f <- getFrob
+  a <- nonAuthCall $ method "rtm.auth.getToken" >=. ("frob", f)
   t <- extractM tokenParser a
-  setToken t
+  modify $ setToken t
   return t
 
 
@@ -60,14 +59,14 @@ getNewToken = do
 tokenParser :: Response -> Parser Token
 tokenParser = (.: "auth") >=> (.: "token")
 
-makeAuthURL :: Session -> QueryURL
-makeAuthURL s = create s authURL $ param ("frob", frob s) &: ("perms", "read") >=> sign
+makeAuthURL :: Config -> Session -> QueryURL
+makeAuthURL c s = create c s (authURL c) $ param ("frob", frob s) >=. ("perms", "delete") >=> sign
 
-getAuth :: (Monad m, Functor m) => QueryBuilder -> RTMT m Response
-getAuth = runQuery restURL . (>=> format >=> sign)
-
-getNewFrob :: (Monad m, Functor m) => RTMT m ()
-getNewFrob = do
-  a <- getAuth $ method "rtm.auth.getFrob"
-  f <- extractM (.: "frob") a
-  modify (\s -> s { frob = f })
+getFrob :: (Monad m, Functor m) => RTMT m Frob
+getFrob = do
+  f <- gets frob
+  when (null f) $ do
+    a <- nonAuthCall $ method "rtm.auth.getFrob"
+    v <- extractM (.: "frob") a
+    modify $ setFrob v
+  gets frob

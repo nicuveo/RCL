@@ -45,7 +45,8 @@ newtype Failure = Failure (Int, String) deriving (Show, Eq, Ord)
 -- instances
 
 instance Error Failure where
-  noMsg = jsonError jsonErrorMsg
+  noMsg  = jsonError jsonErrorMsg
+  strMsg = jsonError
 
 
 
@@ -68,7 +69,6 @@ extractM p = withError . extract p
 
 responseM :: MonadError Failure m => RawData -> m Response
 responseM = withError . response
-
 
 
 

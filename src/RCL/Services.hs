@@ -6,8 +6,7 @@ module RCL.Services where
 
 -- imports
 
-import RCL.Query
-import RCL.Types
+import           RCL.Types
 
 
 

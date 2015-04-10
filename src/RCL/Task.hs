@@ -12,25 +12,39 @@ module RCL.Task (
   TaskId,
   SeriesId,
   ListId,
+  Status(..),
+  Priority(..),
   Task(..),
   TaskSet,
   taskSetParser,
   taskSet,
   taskSetM,
+  byListId,
+  bySeriesId,
+  byTaskId,
+  byName,
+  byDueDate,
+  byAddedDate,
+  byDeletedDate,
+  byCompletedDate,
   ) where
 
 
 
 -- imports
 
+import           Control.Applicative hiding (empty)
 import           Control.Monad
 import           Control.Monad.Error
 import           Data.Aeson
 import           Data.Aeson.Types
 import           Data.IxSet
+import           Data.Maybe
 import           Data.Text           (Text)
-import           Data.Typeable
-import           Data.Vector         as V hiding (empty, reverse)
+import           Data.Time           as T
+import           Data.Time.ISO8601
+import           Data.Typeable       hiding (Proxy)
+import           Data.Vector         as V hiding (empty, reverse, (++))
 import           Prelude             hiding (map)
 
 import           RCL.Response
@@ -41,16 +55,28 @@ import           RCL.Response
 
 type Id = String
 
-newtype TaskId   = TaskId   Id deriving (Show, Read, Eq, Ord, Typeable)
-newtype SeriesId = SeriesId Id deriving (Show, Read, Eq, Ord, Typeable)
-newtype ListId   = ListId   Id deriving (Show, Read, Eq, Ord, Typeable)
+newtype TaskId        = TaskId        Id      deriving (Show, Read, Eq, Ord, Typeable)
+newtype SeriesId      = SeriesId      Id      deriving (Show, Read, Eq, Ord, Typeable)
+newtype ListId        = ListId        Id      deriving (Show, Read, Eq, Ord, Typeable)
+newtype DueDate       = DueDate       UTCTime deriving (Show, Read, Eq, Ord, Typeable)
+newtype AddedDate     = AddedDate     UTCTime deriving (Show, Read, Eq, Ord, Typeable)
+newtype DeletedDate   = DeletedDate   UTCTime deriving (Show, Read, Eq, Ord, Typeable)
+newtype CompletedDate = CompletedDate UTCTime deriving (Show, Read, Eq, Ord, Typeable)
+
+data Status   = Completed | Incomplete deriving (Eq, Ord)
+data Priority = None | P1 | P2 | P3    deriving (Eq, Ord)
 
 data Task = Task {
-  taskId   :: TaskId,
-  seriesId :: SeriesId,
-  listId   :: ListId,
-  name     :: Text
-  } deriving (Show, Eq, Ord, Typeable)
+  taskId      :: TaskId,
+  seriesId    :: SeriesId,
+  listId      :: ListId,
+  name        :: Text,
+  dueTime     :: Bool,
+  dueOn       :: Maybe UTCTime,
+  addedOn     :: Maybe UTCTime,
+  completedOn :: Maybe UTCTime,
+  deletedOn   :: Maybe UTCTime
+  } deriving (Show, Typeable)
 
 type TaskSet = IxSet Task
 
@@ -58,10 +84,39 @@ type TaskSet = IxSet Task
 
 -- instances
 
+instance Show Status where
+  show Completed  = "completed"
+  show Incomplete = "incomplete"
+
+instance Show Priority where
+  show None = "none"
+  show P1   = "1"
+  show P2   = "2"
+  show P3   = "3"
+
+instance Read Priority where
+  readsPrec _ ('N':s) = [(None, s)]
+  readsPrec _ ('1':s) = [(P1,   s)]
+  readsPrec _ ('2':s) = [(P2,   s)]
+  readsPrec _ ('3':s) = [(P3,   s)]
+  readsPrec _ s    = error $ "read Priority: unexpected value '" ++ s ++ "'"
+
 instance Indexable Task where
-  empty = ixSet [ixFun ((:[]) . taskId)  ,
-                 ixFun ((:[]) . seriesId),
-                 ixFun ((:[]) . listId)  ]
+  empty = ixSet [ ixFun (pure . taskId)
+                , ixFun (pure . seriesId)
+                , ixFun (pure . listId)
+                , ixFun (pure . name)
+                , ixFun (maybeToList . fmap DueDate . dueOn)
+                , ixFun (maybeToList . fmap AddedDate . addedOn)
+                , ixFun (maybeToList . fmap DeletedDate . deletedOn)
+                , ixFun (maybeToList . fmap CompletedDate . completedOn)
+                ]
+
+instance Ord Task where
+  compare t1 t2 = compare (taskId t1) (taskId t2)
+
+instance Eq Task where
+  t1 == t2 = taskId t1 == taskId t2
 
 
 
@@ -71,13 +126,39 @@ taskSetParser :: Response -> Parser TaskSet
 taskSetParser r = do
   lists <- r .:* ["tasks", "list"]
   foldl1' unionTask $ map (parseList stub) lists
-  where stub = Task undefined undefined undefined undefined
+  where stub = Task u u u u u u u u u
+        u    = undefined
 
 taskSet :: Response -> Either Failure TaskSet
 taskSet = extract taskSetParser
 
 taskSetM :: MonadError Failure m => Response -> m TaskSet
 taskSetM = extractM taskSetParser
+
+
+byListId :: Proxy ListId
+byListId = Proxy
+
+bySeriesId :: Proxy SeriesId
+bySeriesId = Proxy
+
+byTaskId :: Proxy TaskId
+byTaskId = Proxy
+
+byName :: Proxy Text
+byName = Proxy
+
+byDueDate :: Proxy DueDate
+byDueDate = Proxy
+
+byAddedDate :: Proxy AddedDate
+byAddedDate = Proxy
+
+byDeletedDate :: Proxy DeletedDate
+byDeletedDate = Proxy
+
+byCompletedDate :: Proxy CompletedDate
+byCompletedDate = Proxy
 
 
 
@@ -131,5 +212,17 @@ parseSeriesObject stub obj = do
 
 parseTaskObject :: Task -> Object -> Parser Task
 parseTaskObject stub obj = do
-  tid <- obj .: "id"
-  return $ stub { taskId = TaskId tid }
+  duet <- obj .:? "has_due_time" .!= ("0" :: String)
+  tadd <- obj .:? "added"
+  tcmp <- obj .:? "completed"
+  tdel <- obj .:? "deleted"
+  tdue <- obj .:? "due"
+  tid  <- obj .:  "id"
+  return $ stub {
+    addedOn     = join $ parseISO8601 <$> tadd,
+    completedOn = join $ parseISO8601 <$> tcmp,
+    deletedOn   = join $ parseISO8601 <$> tdel,
+    dueOn       = join $ parseISO8601 <$> tdue,
+    dueTime     = duet /= "0",
+    taskId      = TaskId tid
+    }
